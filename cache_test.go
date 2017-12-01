@@ -95,3 +95,18 @@ func TestConcurrency(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkReading(b *testing.B) {
+	type StoreItem struct {
+		Name string
+		ID   string
+	}
+	cache := New(100*time.Second, 200*time.Second)
+	fetchFn := func() (interface{}, error) {
+		return StoreItem{"name", "id1"}, nil
+	}
+	for i := 0; i < b.N; i++ {
+		val := StoreItem{}
+		cache.Get("key", &val, fetchFn)
+	}
+}
