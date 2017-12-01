@@ -2,6 +2,7 @@ package cachelayer
 
 import (
 	"errors"
+	"math/rand"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -39,6 +40,10 @@ func TestBaseUsage(t *testing.T) {
 
 				So(err, ShouldBeNil)
 				So(check, ShouldEqual, "av")
+			})
+
+			Convey("clear all cache", func() {
+				cache.Clear()
 			})
 		})
 	})
@@ -107,6 +112,10 @@ func BenchmarkReading(b *testing.B) {
 	}
 	for i := 0; i < b.N; i++ {
 		val := StoreItem{}
-		cache.Get("key", &val, fetchFn)
+		if rand.Intn(10) == 0 {
+			cache.Get("nokey", &val, fetchFn)
+		} else {
+			cache.Get("key", &val, fetchFn)
+		}
 	}
 }

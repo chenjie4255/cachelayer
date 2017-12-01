@@ -8,6 +8,14 @@ import (
 	"time"
 )
 
+type DebugLogger interface {
+	Debugf(string, ...interface{})
+}
+
+type emptyLogger struct{}
+
+func (l *emptyLogger) Debugf(string, ...interface{}) {}
+
 type FetchFunc func() (interface{}, error)
 
 type cacheItem struct {
@@ -26,15 +34,18 @@ func (c cacheItem) alive() bool {
 }
 
 type CacheLayer struct {
-	cacheMap  sync.Map
+	cacheMap  *sync.Map
 	lifeTime  int64
 	freshTime int64
+	logger    DebugLogger
 }
 
 func New(freshTime, lifeTime time.Duration) *CacheLayer {
 	layer := CacheLayer{}
+	layer.cacheMap = new(sync.Map)
 	layer.freshTime = freshTime.Nanoseconds()
 	layer.lifeTime = lifeTime.Nanoseconds()
+	layer.logger = &emptyLogger{}
 
 	return &layer
 }
@@ -46,7 +57,24 @@ func decode(data []byte, output interface{}) {
 	}
 }
 
-func (l *CacheLayer) addCacheItem(key string, data interface{}) {
+func (l *CacheLayer) SetDebugLogger(logger DebugLogger) {
+	if logger != nil {
+		l.logger = logger
+	}
+}
+
+func (l *CacheLayer) Clear() {
+	l.cacheMap = new(sync.Map)
+}
+
+func (l *CacheLayer) ClearIfNilErr(err error) error {
+	if err == nil {
+		l.Clear()
+	}
+	return err
+}
+
+func (l *CacheLayer) addCacheItem(key string, data interface{}) []byte {
 	dataBuf := new(bytes.Buffer)
 	enc := gob.NewEncoder(dataBuf)
 	if err := enc.Encode(data); err != nil {
@@ -60,6 +88,7 @@ func (l *CacheLayer) addCacheItem(key string, data interface{}) {
 	storeItem.freshAt = nowT + l.freshTime
 
 	l.cacheMap.Store(key, storeItem)
+	return storeItem.data
 }
 
 func (l *CacheLayer) getCacheItem(key string) *cacheItem {
@@ -70,38 +99,25 @@ func (l *CacheLayer) getCacheItem(key string) *cacheItem {
 	return val.(*cacheItem)
 }
 
-func (l *CacheLayer) update(key string, fetchFn FetchFunc, forced bool) error {
-	if !forced {
-		// in alive period, just one update mission could be executed
-		item := l.getCacheItem(key)
-		if item != nil {
-			if !atomic.CompareAndSwapInt32(&item.updating, 0, 1) {
-				return nil
-			}
+func (l *CacheLayer) update(key string, fetchFn FetchFunc) ([]byte, error) {
+	// in alive period, just one update mission could be executed
+	item := l.getCacheItem(key)
+	if item != nil {
+		if !atomic.CompareAndSwapInt32(&item.updating, 0, 1) {
+			return nil, nil
 		}
 	}
 
-	fetchData, err := fetchFn()
-	if err != nil {
-		return err
-	}
-
-	l.addCacheItem(key, fetchData)
-	return nil
+	return l.fetch(key, fetchFn)
 }
 
-func (l *CacheLayer) mustGetFromCached(key string, output interface{}) {
-	item, found := l.cacheMap.Load(key)
-	if found {
-		cachedItem := item.(*cacheItem)
-		if cachedItem.alive() {
-			decode(item.(*cacheItem).data, output)
-		} else {
-			panic("cached key should be alive")
-		}
-	} else {
-		panic("failed to get a must cached key")
+func (l *CacheLayer) fetch(key string, fetchFn FetchFunc) ([]byte, error) {
+	fetchData, err := fetchFn()
+	if err != nil {
+		return nil, err
 	}
+
+	return l.addCacheItem(key, fetchData), nil
 }
 
 func (l *CacheLayer) Get(key string, output interface{}, fetchFn FetchFunc) error {
@@ -113,18 +129,23 @@ func (l *CacheLayer) Get(key string, output interface{}, fetchFn FetchFunc) erro
 			decode(item.(*cacheItem).data, output)
 
 			if !cachedItem.fresh() {
+				l.logger.Debugf("cache [%s] hit but need update.", key)
 				go func() {
-					l.update(key, fetchFn, false)
+					l.update(key, fetchFn)
 				}()
+			} else {
+				l.logger.Debugf("cache [%s] hit.", key)
 			}
 			return nil
 		}
 	}
 
-	if err := l.update(key, fetchFn, true); err != nil {
+	l.logger.Debugf("cache [%s] unhit or has expired.", key)
+
+	data, err := l.fetch(key, fetchFn)
+	if err != nil {
 		return err
 	}
-
-	l.mustGetFromCached(key, output)
+	decode(data, output)
 	return nil
 }
