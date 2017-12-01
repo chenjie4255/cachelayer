@@ -45,6 +45,11 @@ func TestBaseUsage(t *testing.T) {
 			Convey("clear all cache", func() {
 				cache.Clear()
 			})
+
+			Convey("clear if nil err", func() {
+				So(cache.ClearIfNilErr(nil), ShouldBeNil)
+				So(cache.ClearIfNilErr(errors.New("whatever")), ShouldNotBeNil)
+			})
 		})
 	})
 }
