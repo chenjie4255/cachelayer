@@ -1,8 +1,7 @@
 package cachelayer
 
 import (
-	"bytes"
-	"encoding/gob"
+	"encoding/json"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -51,8 +50,8 @@ func New(freshTime, lifeTime time.Duration) *CacheLayer {
 }
 
 func decode(data []byte, output interface{}) {
-	dec := gob.NewDecoder(bytes.NewBuffer(data))
-	if err := dec.Decode(output); err != nil {
+	err := json.Unmarshal(data, output)
+	if err != nil {
 		panic(err)
 	}
 }
@@ -74,15 +73,18 @@ func (l *CacheLayer) ClearIfNilErr(err error) error {
 	return err
 }
 
-func (l *CacheLayer) addCacheItem(key string, data interface{}) []byte {
-	dataBuf := new(bytes.Buffer)
-	enc := gob.NewEncoder(dataBuf)
-	if err := enc.Encode(data); err != nil {
+func encode(obj interface{}) []byte {
+	data, err := json.Marshal(obj)
+	if err != nil {
 		panic(err)
 	}
+	return data
+}
 
+func (l *CacheLayer) addCacheItem(key string, data interface{}) []byte {
+	dataBytes := encode(data)
 	storeItem := &cacheItem{}
-	storeItem.data = dataBuf.Bytes()
+	storeItem.data = dataBytes
 	nowT := time.Now().UnixNano()
 	storeItem.aliveAt = nowT + l.lifeTime
 	storeItem.freshAt = nowT + l.freshTime
