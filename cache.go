@@ -8,12 +8,14 @@ import (
 )
 
 type DebugLogger interface {
+	SetParam(keyname string, hit bool)
 	Debugf(string, ...interface{})
 }
 
 type emptyLogger struct{}
 
-func (l *emptyLogger) Debugf(string, ...interface{}) {}
+func (l *emptyLogger) Debugf(string, ...interface{})     {}
+func (l *emptyLogger) SetParam(keyname string, hit bool) {}
 
 type FetchFunc func() (interface{}, error)
 
@@ -131,18 +133,21 @@ func (l *CacheLayer) Get(key string, output interface{}, fetchFn FetchFunc) erro
 			decode(item.(*cacheItem).data, output)
 
 			if !cachedItem.fresh() {
-				l.logger.Debugf("cache [%s] hit but need update.", key)
+				l.logger.SetParam(key, true)
+				l.logger.Debugf("cache hit but need update.")
 				go func() {
 					l.update(key, fetchFn)
 				}()
 			} else {
-				l.logger.Debugf("cache [%s] hit.", key)
+				l.logger.SetParam(key, true)
+				l.logger.Debugf("cache hit.")
 			}
 			return nil
 		}
 	}
 
-	l.logger.Debugf("cache [%s] unhit or has expired.", key)
+	l.logger.SetParam(key, false)
+	l.logger.Debugf("cache unhit or has expired.")
 
 	data, err := l.fetch(key, fetchFn)
 	if err != nil {
