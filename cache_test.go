@@ -63,7 +63,7 @@ func TestConcurrency(t *testing.T) {
 			return "ok", nil
 		}
 
-		cache := New(2*time.Second, 10*time.Second)
+		cache := New(2*time.Second, 5*time.Second)
 
 		Convey("retrieve for first time", func() {
 			check := ""

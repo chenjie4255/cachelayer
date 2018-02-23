@@ -2,9 +2,14 @@ package cachelayer
 
 import (
 	"encoding/json"
-	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/patrickmn/go-cache"
+)
+
+const (
+	defaultGCPeriod = 60 * time.Second
 )
 
 type DebugLogger interface {
@@ -33,7 +38,7 @@ func (c cacheItem) alive() bool {
 }
 
 type CacheLayer struct {
-	cacheMap  *sync.Map
+	cacheMap  *cache.Cache
 	lifeTime  int64
 	freshTime int64
 	logger    DebugLogger
@@ -41,7 +46,7 @@ type CacheLayer struct {
 
 func New(freshTime, lifeTime time.Duration) *CacheLayer {
 	layer := CacheLayer{}
-	layer.cacheMap = new(sync.Map)
+	layer.cacheMap = cache.New(lifeTime, defaultGCPeriod)
 	layer.freshTime = freshTime.Nanoseconds()
 	layer.lifeTime = lifeTime.Nanoseconds()
 	layer.logger = &emptyLogger{}
@@ -63,7 +68,7 @@ func (l *CacheLayer) SetDebugLogger(logger DebugLogger) {
 }
 
 func (l *CacheLayer) Clear() {
-	l.cacheMap = new(sync.Map)
+	l.cacheMap = cache.New(time.Duration(l.lifeTime), defaultGCPeriod)
 }
 
 func (l *CacheLayer) ClearIfNilErr(err error) error {
@@ -89,12 +94,12 @@ func (l *CacheLayer) addCacheItem(key string, data interface{}) []byte {
 	storeItem.aliveAt = nowT + l.lifeTime
 	storeItem.freshAt = nowT + l.freshTime
 
-	l.cacheMap.Store(key, storeItem)
+	l.cacheMap.Set(key, storeItem, defaultGCPeriod)
 	return storeItem.data
 }
 
 func (l *CacheLayer) getCacheItem(key string) *cacheItem {
-	val, found := l.cacheMap.Load(key)
+	val, found := l.cacheMap.Get(key)
 	if !found {
 		return nil
 	}
@@ -123,7 +128,7 @@ func (l *CacheLayer) fetch(key string, fetchFn FetchFunc) ([]byte, error) {
 }
 
 func (l *CacheLayer) Get(key string, output interface{}, fetchFn FetchFunc) error {
-	item, found := l.cacheMap.Load(key)
+	item, found := l.cacheMap.Get(key)
 	if found {
 		cachedItem := item.(*cacheItem)
 		if cachedItem.alive() {
@@ -150,4 +155,8 @@ func (l *CacheLayer) Get(key string, output interface{}, fetchFn FetchFunc) erro
 	}
 	decode(data, output)
 	return nil
+}
+
+func (l *CacheLayer) count() int {
+	return l.cacheMap.ItemCount()
 }
