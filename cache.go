@@ -1,7 +1,10 @@
 package cachelayer
 
 import (
+	"crypto/sha1"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"sync/atomic"
 	"time"
@@ -188,4 +191,14 @@ func (l *CacheLayer) Get(key string, output interface{}, fetchFn FetchFunc) erro
 
 func (l *CacheLayer) count() int {
 	return l.cacheMap.ItemCount()
+}
+
+func BuildKey(args ...interface{}) string {
+	steamStrings := fmt.Sprintf("%v", args...)
+
+	hash := sha1.New()
+	hash.Write([]byte(steamStrings))
+
+	result := hash.Sum(nil)
+	return hex.EncodeToString(result)
 }

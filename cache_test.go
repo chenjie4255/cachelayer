@@ -185,3 +185,15 @@ func TestAssignValue(t *testing.T) {
 		})
 	})
 }
+
+func TestBuildKey(t *testing.T) {
+	key1 := BuildKey("ZZZZ", 1, 2)
+	key2 := BuildKey("ZZZZ", 1, 1)
+
+	t.Logf("key1:%s\n", key1)
+	t.Logf("key2:%s\n", key2)
+
+	if key1 == key2 {
+		t.Fatalf("key should not equal")
+	}
+}
