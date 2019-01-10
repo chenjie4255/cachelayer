@@ -2,6 +2,7 @@ package cachelayer
 
 import (
 	"encoding/json"
+	"reflect"
 	"sync/atomic"
 	"time"
 
@@ -23,10 +24,11 @@ func (l *emptyLogger) Log(keyname string, hit bool, msg string) {}
 type FetchFunc func() (interface{}, error)
 
 type cacheItem struct {
-	data     []byte
-	freshAt  int64
-	aliveAt  int64
-	updating int32 // > 0 indicate this item is under updating
+	data       []byte
+	originData interface{}
+	freshAt    int64
+	aliveAt    int64
+	updating   int32 // > 0 indicate this item is under updating
 }
 
 func (c cacheItem) fresh() bool {
@@ -38,10 +40,11 @@ func (c cacheItem) alive() bool {
 }
 
 type CacheLayer struct {
-	cacheMap  *cache.Cache
-	lifeTime  int64
-	freshTime int64
-	logger    DebugLogger
+	cacheMap        *cache.Cache
+	lifeTime        int64
+	freshTime       int64
+	logger          DebugLogger
+	storeOriginData bool
 }
 
 func New(freshTime, lifeTime time.Duration) *CacheLayer {
@@ -59,6 +62,11 @@ func decode(data []byte, output interface{}) {
 	if err != nil {
 		panic(err)
 	}
+}
+
+// SetStoreOriginData in store origin mode, you should not change cache item's value at any time
+func (l *CacheLayer) SetStoreOriginData() {
+	l.storeOriginData = true
 }
 
 func (l *CacheLayer) SetDebugLogger(logger DebugLogger) {
@@ -86,16 +94,21 @@ func encode(obj interface{}) []byte {
 	return data
 }
 
-func (l *CacheLayer) addCacheItem(key string, data interface{}) []byte {
-	dataBytes := encode(data)
+func (l *CacheLayer) addCacheItem(key string, data interface{}) *cacheItem {
 	storeItem := &cacheItem{}
-	storeItem.data = dataBytes
+	if l.storeOriginData {
+		storeItem.originData = data
+	} else {
+		dataBytes := encode(data)
+		storeItem.data = dataBytes
+	}
+
 	nowT := time.Now().UnixNano()
 	storeItem.aliveAt = nowT + l.lifeTime
 	storeItem.freshAt = nowT + l.freshTime
 
 	l.cacheMap.Set(key, storeItem, defaultGCPeriod)
-	return storeItem.data
+	return storeItem
 }
 
 func (l *CacheLayer) getCacheItem(key string) *cacheItem {
@@ -106,7 +119,7 @@ func (l *CacheLayer) getCacheItem(key string) *cacheItem {
 	return val.(*cacheItem)
 }
 
-func (l *CacheLayer) update(key string, fetchFn FetchFunc) ([]byte, error) {
+func (l *CacheLayer) update(key string, fetchFn FetchFunc) (*cacheItem, error) {
 	// in alive period, just one update mission could be executed
 	item := l.getCacheItem(key)
 	if item != nil {
@@ -118,7 +131,7 @@ func (l *CacheLayer) update(key string, fetchFn FetchFunc) ([]byte, error) {
 	return l.fetch(key, fetchFn)
 }
 
-func (l *CacheLayer) fetch(key string, fetchFn FetchFunc) ([]byte, error) {
+func (l *CacheLayer) fetch(key string, fetchFn FetchFunc) (*cacheItem, error) {
 	fetchData, err := fetchFn()
 	if err != nil {
 		return nil, err
@@ -127,13 +140,25 @@ func (l *CacheLayer) fetch(key string, fetchFn FetchFunc) ([]byte, error) {
 	return l.addCacheItem(key, fetchData), nil
 }
 
+func assignValue(left, right interface{}) {
+	if reflect.ValueOf(right).Kind() == reflect.Interface || reflect.ValueOf(right).Kind() == reflect.Ptr {
+		reflect.ValueOf(left).Elem().Set(reflect.ValueOf(right).Elem())
+	} else {
+		reflect.ValueOf(left).Elem().Set(reflect.ValueOf(right))
+	}
+}
+
 func (l *CacheLayer) Get(key string, output interface{}, fetchFn FetchFunc) error {
 	item, found := l.cacheMap.Get(key)
 	if found {
 		cachedItem := item.(*cacheItem)
 		if cachedItem.alive() {
 			// in alive period
-			decode(item.(*cacheItem).data, output)
+			if l.storeOriginData {
+				assignValue(output, cachedItem.originData)
+			} else {
+				decode(item.(*cacheItem).data, output)
+			}
 
 			if !cachedItem.fresh() {
 				l.logger.Log(key, true, "cache hit but need update.")
@@ -149,11 +174,15 @@ func (l *CacheLayer) Get(key string, output interface{}, fetchFn FetchFunc) erro
 
 	l.logger.Log(key, false, "cache unhit or has expired.")
 
-	data, err := l.fetch(key, fetchFn)
+	newItem, err := l.fetch(key, fetchFn)
 	if err != nil {
 		return err
 	}
-	decode(data, output)
+	if l.storeOriginData {
+		assignValue(output, newItem.originData)
+	} else {
+		decode(newItem.data, output)
+	}
 	return nil
 }
 

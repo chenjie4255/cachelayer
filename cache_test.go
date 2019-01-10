@@ -64,6 +64,7 @@ func TestConcurrency(t *testing.T) {
 		}
 
 		cache := New(2*time.Second, 5*time.Second)
+		cache.SetStoreOriginData()
 
 		Convey("retrieve for first time", func() {
 			check := ""
@@ -123,4 +124,64 @@ func BenchmarkReading(b *testing.B) {
 			cache.Get("key", &val, fetchFn)
 		}
 	}
+}
+
+func TestAssignValue(t *testing.T) {
+	Convey("testing assign string ", t, func() {
+		str := "ok"
+		ret := "1"
+
+		Convey("assign value", func() {
+			assignValue(&ret, str)
+			So(ret, ShouldEqual, "ok")
+		})
+
+		Convey("assign pointer", func() {
+			assignValue(&ret, &str)
+			So(ret, ShouldEqual, "ok")
+		})
+	})
+
+	Convey("testing assign integer", t, func() {
+		val := 1
+		ret := 0
+
+		Convey("assign value", func() {
+			assignValue(&ret, val)
+			So(ret, ShouldEqual, 1)
+		})
+
+		Convey("assign pointer", func() {
+			assignValue(&ret, &val)
+			So(ret, ShouldEqual, 1)
+		})
+	})
+
+	Convey("testing assign slice", t, func() {
+		val := make([]int, 3, 5)
+		val[0] = 0
+		val[1] = 1
+		val[2] = 2
+		ret := []int{}
+
+		Convey("assign value", func() {
+			assignValue(&ret, val)
+			So(len(ret), ShouldEqual, 3)
+			ret[0] = 100
+			So(val[0], ShouldEqual, 100)
+			val = append(val, 4)
+			So(len(ret), ShouldEqual, 3)
+			val[0] = 101
+			So(ret[0], ShouldAlmostEqual, 101)
+			// So(fmt.Sprintf("%p", &ret), ShouldEqual, fmt.Sprintf("%p", &val))
+		})
+
+		Convey("assign pointer", func() {
+			assignValue(&ret, &val)
+			So(len(ret), ShouldEqual, 3)
+
+			ret[0] = 100
+			So(val[0], ShouldEqual, 100)
+		})
+	})
 }
